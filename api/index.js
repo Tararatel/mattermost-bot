@@ -13,7 +13,6 @@ const botToken = process.env.BOT_TOKEN;
 const client = new Client4();
 client.setUrl(mattermostUrl);
 client.setToken(botToken);
-client.setRejectUnauthorized(false);
 
 // Получение списка пользователей
 async function getUsers() {
