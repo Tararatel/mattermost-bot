@@ -4,6 +4,7 @@ import express from 'express';
 const app = express();
 
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Конфигурация Mattermost
 const mattermostUrl = process.env.MATTERMOST_URL;
@@ -12,6 +13,7 @@ const botToken = process.env.BOT_TOKEN;
 const client = new Client4();
 client.setUrl(mattermostUrl);
 client.setToken(botToken);
+client.setRejectUnauthorized(false);
 
 // Получение списка пользователей
 async function getUsers() {
@@ -36,6 +38,7 @@ function createGroups(users, groupSize) {
 
 // Формирование интерактивного сообщения
 async function createInteractiveMessage(channelId) {
+  console.log('Формируем интерактивное сообщение для канала:', channelId);
   const users = await getUsers();
   const userOptions = users.map((user) => ({
     text: user.username,
