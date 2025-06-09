@@ -8,9 +8,7 @@ app.use(express.json());
 // Конфигурация Mattermost
 const mattermostUrl = process.env.MATTERMOST_URL;
 const botToken = process.env.BOT_TOKEN;
-const port = process.env.PORT || 3000;
 
-// Инициализация клиента Mattermost
 const client = new Client4();
 client.setUrl(mattermostUrl);
 client.setToken(botToken);
@@ -19,7 +17,7 @@ client.setToken(botToken);
 async function getUsers() {
   try {
     const users = await client.getAllUsers();
-    return users.filter(user => !user.is_bot && user.delete_at === 0);
+    return users.filter((user) => !user.is_bot && user.delete_at === 0);
   } catch (error) {
     console.error('Ошибка получения пользователей:', error);
     return [];
@@ -39,57 +37,59 @@ function createGroups(users, groupSize) {
 // Формирование интерактивного сообщения
 async function createInteractiveMessage(channelId) {
   const users = await getUsers();
-  const userOptions = users.map(user => ({
+  const userOptions = users.map((user) => ({
     text: user.username,
-    value: user.id
+    value: user.id,
   }));
 
   const message = {
     channel_id: channelId,
     message: 'Создать группы пользователей',
     props: {
-      attachments: [{
-        text: 'Выберите пользователей и размер группы',
-        actions: [
-          {
-            name: 'Выбрать пользователей',
-            integration: {
-              url: `http://localhost:${port}/select-users`,
-              context: {
-                action: 'select_users'
-              }
+      attachments: [
+        {
+          text: 'Выберите пользователей и размер группы',
+          actions: [
+            {
+              name: 'Выбрать пользователей',
+              integration: {
+                url: 'https://mattermost-bot-vert.vercel.app/select-users',
+                context: {
+                  action: 'select_users',
+                },
+              },
+              type: 'select',
+              options: userOptions,
             },
-            type: 'select',
-            options: userOptions
-          },
-          {
-            name: 'Размер группы',
-            integration: {
-              url: `http://localhost:${port}/select-size`,
-              context: {
-                action: 'select_size'
-              }
+            {
+              name: 'Размер группы',
+              integration: {
+                url: 'https://mattermost-bot-vert.vercel.app/select-size',
+                context: {
+                  action: 'select_size',
+                },
+              },
+              type: 'select',
+              options: [
+                { text: '2', value: '2' },
+                { text: '3', value: '3' },
+                { text: '5', value: '5' },
+              ],
             },
-            type: 'select',
-            options: [
-              { text: '2', value: '2' },
-              { text: '3', value: '3' },
-              { text: '5', value: '5' }
-            ]
-          },
-          {
-            name: 'Создать группы',
-            integration: {
-              url: `http://localhost:${port}/create-groups`,
-              context: {
-                action: 'create_groups'
-              }
+            {
+              name: 'Создать группы',
+              integration: {
+                url: 'https://mattermost-bot-vert.vercel.app/create-groups',
+                context: {
+                  action: 'create_groups',
+                },
+              },
+              type: 'button',
             },
-            type: 'button'
-          }
-        ]
-      }]
-    }
+          ],
+        },
+      ],
+    },
   };
 
   await client.createPost(message);
@@ -98,59 +98,66 @@ async function createInteractiveMessage(channelId) {
 // Обработка Slash-команды /groupbot
 app.post('/groupbot', async (req, res) => {
   const { channel_id } = req.body;
-  await createInteractiveMessage(channel_id);
-  res.json({ response_type: 'ephemeral', text: 'Меню бота открыто!' });
+  try {
+    await createInteractiveMessage(channel_id);
+    res.json({ response_type: 'ephemeral', text: 'Меню бота открыто!' });
+  } catch (error) {
+    console.error('Ошибка при создании меню:', error);
+    res.json({ response_type: 'ephemeral', text: 'Ошибка при открытии меню.' });
+  }
 });
 
 // Хранение выбранных данных
-let selectedUsers = [];
-let groupSize = 2;
+const sessions = {};
 
-// Обработка выбора пользователей
 app.post('/select-users', async (req, res) => {
+  const { user_id } = req.body.context || {};
+  if (!sessions[user_id]) sessions[user_id] = { selectedUsers: [], groupSize: 2 };
   const { user_ids } = req.body.context;
-  selectedUsers = user_ids.split(',');
-  res.json({ update: { message: `Выбрано пользователей: ${selectedUsers.length}` } });
+  sessions[user_id].selectedUsers = user_ids ? user_ids.split(',') : [];
+  res.json({
+    update: {
+      message: `Выбрано пользователей: ${sessions[user_id].selectedUsers.length}`,
+    },
+  });
 });
 
-// Обработка выбора размера группы
 app.post('/select-size', async (req, res) => {
-  groupSize = parseInt(req.body.context.value, 10);
-  res.json({ update: { message: `Размер группы: ${groupSize}` } });
+  const { user_id } = req.body.context || {};
+  if (!sessions[user_id]) sessions[user_id] = { selectedUsers: [], groupSize: 2 };
+  sessions[user_id].groupSize = parseInt(req.body.context.value, 10) || 2;
+  res.json({ update: { message: `Размер группы: ${sessions[user_id].groupSize}` } });
 });
 
-// Обработка создания групп
 app.post('/create-groups', async (req, res) => {
-  const { channel_id } = req.body;
-  if (selectedUsers.length === 0) {
+  const { channel_id, user_id } = req.body.context || req.body;
+  if (!sessions[user_id] || sessions[user_id].selectedUsers.length === 0) {
     res.json({ response_type: 'ephemeral', text: 'Выберите пользователей!' });
     return;
   }
 
-  const users = await Promise.all(selectedUsers.map(id => client.getUser(id)));
-  const groups = createGroups(users, groupSize);
+  try {
+    const users = await Promise.all(
+      sessions[user_id].selectedUsers.map((id) => client.getUser(id)),
+    );
+    const groups = createGroups(users, sessions[user_id].groupSize);
 
-  let response = 'Сформированные группы:\n';
-  groups.forEach((group, index) => {
-    const members = group.map(user => `@${user.username}`).join(', ');
-    response += `Группа ${index + 1}: ${members}\n`;
-  });
+    let response = 'Сформированные группы:\n';
+    groups.forEach((group, index) => {
+      const members = group.map((user) => `@${user.username}`).join(', ');
+      response += `Группа ${index + 1}: ${members}\n`;
+    });
 
-  await client.createPost({
-    channel_id,
-    message: response
-  });
-
-  res.json({ response_type: 'ephemeral', text: 'Группы созданы!' });
+    await client.createPost({ channel_id, message: response });
+    delete sessions[user_id];
+    res.json({ response_type: 'ephemeral', text: 'Группы созданы!' });
+  } catch (error) {
+    console.error('Ошибка при создании групп:', error);
+    res.json({ response_type: 'ephemeral', text: 'Ошибка при создании групп.' });
+  }
 });
 
 // Запуск сервера
-app.listen(port, () => {
-  console.log(`Сервер запущен на порту ${port}`);
-});
-
-// Подключение WebSocket
-const ws = client.initWebSocket();
-ws.on('open', () => {
-  console.log('WebSocket подключен');
+app.listen(process.env.PORT || 3000, () => {
+  console.log(`Сервер запущен на порту ${process.env.PORT || 3000}`);
 });
