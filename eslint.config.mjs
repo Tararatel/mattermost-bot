@@ -6,7 +6,7 @@ import { defineConfig } from 'eslint/config';
 import globals from 'globals';
 
 export default defineConfig([
-  { files: ['**/*.js'], languageOptions: { sourceType: 'commonjs' } },
+  { files: ['**/*.js'], languageOptions: { sourceType: 'es6' } },
   {
     files: ['**/*.{js,mjs,cjs}'],
     languageOptions: {

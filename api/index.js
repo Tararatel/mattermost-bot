@@ -1,6 +1,6 @@
-require('dotenv').config();
-const { Client4 } = require('mattermost-client');
-const express = require('express');
+import 'dotenv/config';
+import { Client4 } from 'mattermost-client';
+import express from 'express';
 const app = express();
 
 app.use(express.json());
