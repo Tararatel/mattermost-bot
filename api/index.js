@@ -17,10 +17,23 @@ client.setToken(botToken);
 // Получение списка пользователей
 async function getUsers() {
   try {
-    const users = await client.getAllUsers();
-    return users.filter((user) => !user.is_bot && user.delete_at === 0);
+    console.log('Запрашиваем список пользователей...');
+    const users = [];
+    let page = 0;
+    const perPage = 200;
+    let hasMore = true;
+    while (hasMore) {
+      const pageUsers = await client.getProfiles(0, perPage, page * perPage); // page, perPage, offset
+      console.log(`Получено ${pageUsers.length} пользователей на странице ${page}`);
+      users.push(...pageUsers);
+      hasMore = pageUsers.length === perPage;
+      page++;
+    }
+    const filteredUsers = users.filter((user) => !user.is_bot && user.delete_at === 0);
+    console.log(`Фильтровано пользователей: ${filteredUsers.length}`);
+    return filteredUsers;
   } catch (error) {
-    console.error('Ошибка получения пользователей:', error);
+    console.error('Ошибка получения пользователей:', error.message, error.stack);
     return [];
   }
 }
@@ -39,6 +52,10 @@ function createGroups(users, groupSize) {
 async function createInteractiveMessage(channelId) {
   console.log('Формируем интерактивное сообщение для канала:', channelId);
   const users = await getUsers();
+  if (users.length === 0) {
+    console.error('Список пользователей пуст');
+    throw new Error('Не удалось получить список пользователей');
+  }
   const userOptions = users.map((user) => ({
     text: user.username,
     value: user.id,
@@ -94,7 +111,17 @@ async function createInteractiveMessage(channelId) {
     },
   };
 
-  await client.createPost(message);
+  try {
+    console.log('Отправляем пост в канал:', JSON.stringify(message));
+    await client.createPost(message); // Передаем весь объект message
+    console.log('Пост успешно отправлен');
+  } catch (error) {
+    console.error('Ошибка при создании поста:', error.message, error.stack);
+    if (error.status_code === 404) {
+      console.error('404: Проверьте channel_id или доступ бота к каналу');
+    }
+    throw error;
+  }
 }
 
 // Обработка Slash-команды /groupbot
