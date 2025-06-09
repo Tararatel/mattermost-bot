@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { Client4 } from 'mattermost-client';
+import { Client4 } from '@mattermost/client';
 import express from 'express';
 const app = express();
 

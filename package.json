@@ -6,11 +6,10 @@
   "scripts": {
     "dev": "nodemon api/index.js"
   },
-
   "dependencies": {
+    "@mattermost/client": "^10.8.0",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
-    "mattermost-client": "^6.5.0",
     "nodemon": "^3.1.10"
   },
   "devDependencies": {
