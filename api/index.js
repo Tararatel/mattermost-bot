@@ -10,10 +10,31 @@ app.use(express.urlencoded({ extended: true }));
 const mattermostUrl = process.env.MATTERMOST_URL;
 const botToken = process.env.BOT_TOKEN;
 
+console.log('Загруженные переменные окружения:', {
+  mattermostUrl,
+  botToken: botToken ? 'установлен' : 'отсутствует',
+});
+if (!mattermostUrl || !botToken) {
+  console.error(
+    'Ошибка: MATTERMOST_URL или BOT_TOKEN отсутствуют в переменных окружения',
+  );
+  process.exit(1); // Завершаем процесс, если переменные не заданы
+}
+
 const client = new Client4();
 client.setUrl(mattermostUrl);
 client.setToken(botToken);
 
+async function testAuth() {
+  try {
+    const me = await client.getMe();
+    console.log('Авторизация успешна. Пользователь:', me.username);
+    return true;
+  } catch (error) {
+    console.error('Ошибка авторизации:', error.message, error.stack);
+    return false;
+  }
+}
 // Получение списка пользователей
 async function getUsers() {
   try {
