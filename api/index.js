@@ -8,8 +8,8 @@ app.use(express.urlencoded({ extended: true }));
 
 // Конфигурация Mattermost
 const mattermostUrl =
-  process.env.MATTERMOST_URL || 'https://elbrus-mattermost.ignorelist.com';
-const botToken = process.env.BOT_TOKEN || 'kwo7ijukwfrg3qzufukwpz3q5y';
+  process.env.MATTERMOST_URL;
+const botToken = process.env.BOT_TOKEN;
 
 console.log('Загруженные переменные окружения:', {
   mattermostUrl,
