@@ -33,91 +33,71 @@ console.log(
   botToken.substring(0, 5) + '...' + botToken.substring(botToken.length - 5),
 );
 
-// Проверка аутентификации с разными форматами токена
+// Исправленная проверка аутентификации
 async function testAuth() {
-  const tokenFormats = [
-    botToken, // как есть
-    `Bearer ${botToken}`, // с Bearer
-    botToken.replace('Bearer ', ''), // без Bearer
-  ];
+  console.log('Тестируем авторизацию...');
 
-  for (let i = 0; i < tokenFormats.length; i++) {
-    const token = tokenFormats[i];
-    console.log(
-      `Попытка авторизации ${i + 1}/3 с токеном формата:`,
-      token.startsWith('Bearer') ? 'Bearer ...' : 'без Bearer...',
-    );
-
-    try {
-      client.setToken(token);
-
-      // Дополнительно устанавливаем заголовок вручную
-      client.setDefaultHeaders({
-        Authorization: token.startsWith('Bearer') ? token : `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      });
-
-      const me = await client.getMe();
-      console.log('Авторизация успешна! Пользователь:', {
-        id: me.id,
-        username: me.username,
-        roles: me.roles,
-        is_bot: me.is_bot,
-      });
-      return true;
-    } catch (error) {
-      console.error(`Попытка ${i + 1} неудачна:`, {
-        message: error.message,
-        status: error.status_code,
-        url: error.url,
-      });
-    }
-  }
-
-  // Если все попытки неудачны, попробуем сделать простой HTTP запрос
-  console.log('Все попытки через SDK неудачны, пробуем прямой HTTP запрос...');
   try {
-    const response = await fetch(`${mattermostUrl}/api/v4/users/me`, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${botToken.replace('Bearer ', '')}`,
-        'Content-Type': 'application/json',
-      },
+    // Убираем Bearer если есть для установки токена
+    const cleanToken = botToken.replace('Bearer ', '');
+    client.setToken(cleanToken);
+
+    console.log('Токен установлен, проверяем аутентификацию...');
+
+    const me = await client.getMe();
+    console.log('Авторизация успешна! Пользователь:', {
+      id: me.id,
+      username: me.username,
+      roles: me.roles,
+      is_bot: me.is_bot,
+    });
+    return true;
+  } catch (error) {
+    console.error('SDK авторизация неудачна:', {
+      message: error.message,
+      status: error.status_code,
+      url: error.url,
     });
 
-    console.log('HTTP запрос статус:', response.status);
-    console.log('HTTP запрос headers:', Object.fromEntries(response.headers.entries()));
+    // Пробуем прямой HTTP запрос
+    console.log('Пробуем прямой HTTP запрос...');
+    try {
+      const cleanToken = botToken.replace('Bearer ', '');
+      const response = await fetch(`${mattermostUrl}/api/v4/users/me`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${cleanToken}`,
+          'Content-Type': 'application/json',
+        },
+      });
 
-    if (response.ok) {
-      const userData = await response.json();
-      console.log('Прямой HTTP запрос успешен:', userData.username);
-      return true;
-    } else {
-      const errorText = await response.text();
-      console.error('HTTP запрос неудачен:', errorText);
+      console.log('HTTP запрос статус:', response.status);
+
+      if (response.ok) {
+        const userData = await response.json();
+        console.log('Прямой HTTP запрос успешен:', userData.username);
+
+        // Если HTTP работает, переустанавливаем токен в клиенте
+        client.setToken(cleanToken);
+        return true;
+      } else {
+        const errorText = await response.text();
+        console.error('HTTP запрос неудачен:', errorText);
+      }
+    } catch (httpError) {
+      console.error('Ошибка HTTP запроса:', httpError.message);
     }
-  } catch (httpError) {
-    console.error('Ошибка HTTP запроса:', httpError.message);
   }
 
   return false;
-}
-
-// Инициализация клиента при старте (убираем process.exit для Vercel)
-async function initializeClient() {
-  console.log('Инициализация Mattermost клиента...');
-  const isAuth = await testAuth();
-  if (!isAuth) {
-    console.error('Не удалось авторизоваться в Mattermost. Продолжаем работу...');
-    return false;
-  }
-  return true;
 }
 
 // Альтернативная функция получения пользователей через прямой HTTP запрос
 async function getUsersDirectHttp() {
   try {
     console.log('Получение пользователей через прямой HTTP запрос...');
+    const cleanToken = botToken.replace('Bearer ', '');
+
     const response = await fetch(
       `${mattermostUrl}/api/v4/users?page=0&per_page=60&in_team=${
         process.env.TEAM_ID || 'jgx6zzdutpdcpfmbayrmeydyzw'
@@ -125,7 +105,7 @@ async function getUsersDirectHttp() {
       {
         method: 'GET',
         headers: {
-          Authorization: `Bearer ${botToken.replace('Bearer ', '')}`,
+          Authorization: `Bearer ${cleanToken}`,
           'Content-Type': 'application/json',
         },
       },
@@ -216,6 +196,37 @@ function createGroups(users, groupSize) {
   return groups;
 }
 
+// Исправленная функция создания поста через HTTP
+async function createPostHttp(channelId, message) {
+  try {
+    const cleanToken = botToken.replace('Bearer ', '');
+    const response = await fetch(`${mattermostUrl}/api/v4/posts`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${cleanToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        channel_id: channelId,
+        message: message,
+      }),
+    });
+
+    if (response.ok) {
+      const post = await response.json();
+      console.log('Пост создан успешно через HTTP:', post.id);
+      return post;
+    } else {
+      const errorText = await response.text();
+      console.error('Ошибка создания поста через HTTP:', response.status, errorText);
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+  } catch (error) {
+    console.error('Ошибка HTTP запроса создания поста:', error.message);
+    throw error;
+  }
+}
+
 // Формирование интерактивного сообщения
 async function createInteractiveMessage(channelId) {
   console.log('Формируем интерактивное сообщение для канала:', channelId);
@@ -290,11 +301,21 @@ async function createInteractiveMessage(channelId) {
     };
 
     console.log('Отправляем пост в канал...');
-    await client.createPost(message);
-    console.log('Пост успешно отправлен');
+
+    // Пробуем через SDK, если не получается - через HTTP
+    try {
+      await client.createPost(message);
+      console.log('Пост успешно отправлен через SDK');
+    } catch (sdkError) {
+      console.log('SDK не работает, отправляем через HTTP...');
+      // Для HTTP нужно отправить как строку, не как объект с props
+      const simpleMessage =
+        'Меню создания групп будет доступно в следующем обновлении. Пока используйте команду напрямую.';
+      await createPostHttp(channelId, simpleMessage);
+    }
   } catch (error) {
     console.error('Ошибка при создании поста:', error.message);
-    if (error.status_code === 404) {
+    if (error.message.includes('404')) {
       console.error('404: Проверьте channel_id или доступ бота к каналу');
     }
     throw error;
@@ -304,10 +325,21 @@ async function createInteractiveMessage(channelId) {
 // Хранение выбранных данных
 const sessions = {};
 
+// Инициализация клиента при старте (убираем process.exit для Vercel)
+async function initializeClient() {
+  console.log('Инициализация Mattermost клиента...');
+  const isAuth = await testAuth();
+  if (!isAuth) {
+    console.error('Не удалось авторизоваться в Mattermost. Продолжаем работу...');
+    return false;
+  }
+  return true;
+}
+
 // Обработка Slash-команды /groupbot
 app.post('/groupbot', async (req, res) => {
   console.log('Получена команда /groupbot:', req.body);
-  const { channel_id, user_id } = req.body;
+  const { channel_id, user_id, text } = req.body;
 
   try {
     // Проверяем аутентификацию перед обработкой команды
@@ -316,21 +348,61 @@ app.post('/groupbot', async (req, res) => {
       console.error('Не удалось авторизоваться для выполнения команды');
       res.json({
         response_type: 'ephemeral',
-        text: 'Ошибка авторизации бота. Обратитесь к администратору.',
+        text: 'Ошибка авторизации бота. Проверьте токен и права доступа.',
       });
       return;
     }
 
-    await createInteractiveMessage(channel_id);
-    res.json({
-      response_type: 'ephemeral',
-      text: 'Меню бота открыто! Выберите пользователей и размер группы.',
-    });
+    // Простая команда для создания групп без интерактивных элементов
+    if (text && text.includes('create')) {
+      const users = await getUsers();
+      if (users.length === 0) {
+        res.json({
+          response_type: 'ephemeral',
+          text: 'Не удалось получить список пользователей.',
+        });
+        return;
+      }
+
+      const groupSize = 3; // По умолчанию
+      const groups = createGroups(users, groupSize);
+
+      let response = '## Сформированные группы:\n\n';
+      groups.forEach((group, index) => {
+        const members = group.map((user) => `@${user.username}`).join(', ');
+        response += `**Группа ${index + 1}:** ${members}\n`;
+      });
+
+      // Отправляем результат в канал
+      try {
+        await client.createPost({
+          channel_id,
+          message: response,
+        });
+        res.json({
+          response_type: 'ephemeral',
+          text: 'Группы успешно созданы!',
+        });
+      } catch (postError) {
+        console.error('Ошибка отправки поста через SDK, пробуем HTTP...');
+        await createPostHttp(channel_id, response);
+        res.json({
+          response_type: 'ephemeral',
+          text: 'Группы успешно созданы!',
+        });
+      }
+    } else {
+      // Показываем справку
+      res.json({
+        response_type: 'ephemeral',
+        text: 'Используйте `/groupbot create` для создания случайных групп из участников команды.',
+      });
+    }
   } catch (error) {
-    console.error('Ошибка при создании меню:', error);
+    console.error('Ошибка при выполнении команды:', error);
     res.json({
       response_type: 'ephemeral',
-      text: `Ошибка при открытии меню: ${error.message}`,
+      text: `Ошибка: ${error.message}`,
     });
   }
 });
@@ -393,7 +465,22 @@ app.post('/create-groups', async (req, res) => {
     const users = await Promise.all(
       sessions[user_id].selectedUsers.map(async (id) => {
         try {
-          return await client.getUser(id);
+          // Пробуем через SDK, если не работает - через HTTP
+          try {
+            return await client.getUser(id);
+          } catch (sdkError) {
+            const cleanToken = botToken.replace('Bearer ', '');
+            const response = await fetch(`${mattermostUrl}/api/v4/users/${id}`, {
+              headers: {
+                Authorization: `Bearer ${cleanToken}`,
+                'Content-Type': 'application/json',
+              },
+            });
+            if (response.ok) {
+              return await response.json();
+            }
+            throw new Error(`HTTP ${response.status}`);
+          }
         } catch (error) {
           console.error(`Ошибка получения пользователя ${id}:`, error.message);
           return null;
@@ -419,10 +506,14 @@ app.post('/create-groups', async (req, res) => {
       response += `**Группа ${index + 1}:** ${members}\n`;
     });
 
-    await client.createPost({
-      channel_id,
-      message: response,
-    });
+    try {
+      await client.createPost({
+        channel_id,
+        message: response,
+      });
+    } catch (sdkError) {
+      await createPostHttp(channel_id, response);
+    }
 
     delete sessions[user_id];
     res.json({
