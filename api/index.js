@@ -9,7 +9,7 @@ app.use(express.urlencoded({ extended: true }));
 // Конфигурация Mattermost
 const mattermostUrl =
   process.env.MATTERMOST_URL || 'https://elbrus-mattermost.ignorelist.com';
-const botToken = process.env.BOT_TOKEN || 'kwo7ijukwfrg3qzufukwpz3q5y';
+const botToken = process.env.BOT_TOKEN || 'z9e754fjpjfz7dwd6rozjg51xe';
 
 console.log('Загруженные переменные окружения:', {
   mattermostUrl,
@@ -26,28 +26,57 @@ if (!mattermostUrl || !botToken) {
 // Создание и настройка клиента
 const client = new Client4();
 client.setUrl(mattermostUrl);
-client.setToken(botToken);
+
+// Устанавливаем токен с префиксом Bearer
+if (botToken.startsWith('Bearer ')) {
+  client.setToken(botToken);
+} else {
+  client.setToken(`Bearer ${botToken}`);
+}
+
+console.log('Клиент настроен с URL:', mattermostUrl);
 
 // Проверка аутентификации
 async function testAuth() {
   try {
+    console.log('Попытка авторизации...');
     const me = await client.getMe();
-    console.log('Авторизация успешна. Пользователь:', me.username);
+    console.log('Авторизация успешна. Пользователь:', {
+      id: me.id,
+      username: me.username,
+      roles: me.roles,
+    });
     return true;
   } catch (error) {
-    console.error('Ошибка авторизации:', error.message);
-    return false;
+    console.error('Ошибка авторизации:', {
+      message: error.message,
+      status: error.status_code,
+      url: error.url,
+    });
+
+    // Попробуем без префикса Bearer
+    try {
+      console.log('Попытка авторизации без префикса Bearer...');
+      client.setToken(botToken.replace('Bearer ', ''));
+      const me = await client.getMe();
+      console.log('Авторизация успешна без Bearer. Пользователь:', me.username);
+      return true;
+    } catch (secondError) {
+      console.error('Вторая попытка авторизации также неудачна:', secondError.message);
+      return false;
+    }
   }
 }
 
-// Инициализация клиента при старте
+// Инициализация клиента при старте (убираем process.exit для Vercel)
 async function initializeClient() {
   console.log('Инициализация Mattermost клиента...');
   const isAuth = await testAuth();
   if (!isAuth) {
-    console.error('Не удалось авторизоваться в Mattermost');
-    process.exit(1);
+    console.error('Не удалось авторизоваться в Mattermost. Продолжаем работу...');
+    return false;
   }
+  return true;
 }
 
 // Получение списка пользователей с улучшенной обработкой ошибок
@@ -56,26 +85,51 @@ async function getUsers() {
     console.log('Запрашиваем список пользователей...');
 
     // Проверяем аутентификацию перед запросом
-    await client.getMe();
+    try {
+      await client.getMe();
+      console.log('Проверка аутентификации прошла успешно');
+    } catch (authError) {
+      console.log('Ошибка аутентификации, попытка переустановить токен...');
+      // Переустанавливаем токен
+      if (botToken.startsWith('Bearer ')) {
+        client.setToken(botToken);
+      } else {
+        client.setToken(botToken);
+      }
+
+      // Повторная проверка
+      await client.getMe();
+      console.log('Повторная аутентификация успешна');
+    }
 
     const users = [];
     let page = 0;
-    const perPage = 200;
+    const perPage = 60; // Уменьшаем размер страницы
     let hasMore = true;
 
-    while (hasMore) {
+    while (hasMore && page < 10) {
+      // Ограничиваем количество страниц
       try {
+        console.log(`Запрашиваем страницу ${page}...`);
         const pageUsers = await client.getProfiles(page, perPage);
-        console.log(`Получено ${pageUsers.length} пользователей на странице ${page}`);
+        console.log(
+          `Получено пользователей на странице ${page}:`,
+          typeof pageUsers,
+          Object.keys(pageUsers || {}).length,
+        );
 
         if (Array.isArray(pageUsers)) {
           users.push(...pageUsers);
           hasMore = pageUsers.length === perPage;
-        } else {
-          console.log('Получен объект вместо массива, преобразуем...');
+        } else if (pageUsers && typeof pageUsers === 'object') {
+          // Mattermost API возвращает объект, где ключи - это ID пользователей
           const userArray = Object.values(pageUsers);
+          console.log(`Преобразован объект в массив: ${userArray.length} пользователей`);
           users.push(...userArray);
           hasMore = userArray.length === perPage;
+        } else {
+          console.log('Неожиданный формат ответа:', pageUsers);
+          break;
         }
 
         page++;
@@ -85,26 +139,12 @@ async function getUsers() {
       }
     }
 
+    console.log(`Всего получено пользователей: ${users.length}`);
     const filteredUsers = users.filter((user) => !user.is_bot && user.delete_at === 0);
     console.log(`Фильтровано пользователей: ${filteredUsers.length}`);
     return filteredUsers;
   } catch (error) {
     console.error('Ошибка получения пользователей:', error.message);
-
-    // Если ошибка аутентификации, попробуем переподключиться
-    if (error.message.includes('Invalid or expired session')) {
-      console.log('Попытка повторной аутентификации...');
-      client.setToken(botToken);
-
-      try {
-        await client.getMe();
-        console.log('Повторная аутентификация успешна');
-        return await getUsers(); // Рекурсивный вызов после переподключения
-      } catch (reAuthError) {
-        console.error('Повторная аутентификация не удалась:', reAuthError.message);
-      }
-    }
-
     return [];
   }
 }
@@ -213,6 +253,17 @@ app.post('/groupbot', async (req, res) => {
   const { channel_id, user_id } = req.body;
 
   try {
+    // Проверяем аутентификацию перед обработкой команды
+    const isAuth = await initializeClient();
+    if (!isAuth) {
+      console.error('Не удалось авторизоваться для выполнения команды');
+      res.json({
+        response_type: 'ephemeral',
+        text: 'Ошибка авторизации бота. Обратитесь к администратору.',
+      });
+      return;
+    }
+
     await createInteractiveMessage(channel_id);
     res.json({
       response_type: 'ephemeral',
@@ -335,8 +386,10 @@ app.get('/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// Инициализация при старте
-initializeClient().catch(console.error);
+// Инициализация при старте (не блокируем запуск)
+initializeClient().catch((error) => {
+  console.error('Ошибка инициализации:', error.message);
+});
 
 // Запуск сервера
 const PORT = process.env.PORT || 3000;
