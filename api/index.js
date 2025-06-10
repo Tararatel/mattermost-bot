@@ -9,7 +9,7 @@ app.use(express.urlencoded({ extended: true }));
 // Конфигурация Mattermost
 const mattermostUrl =
   process.env.MATTERMOST_URL || 'https://elbrus-mattermost.ignorelist.com';
-const botToken = process.env.BOT_TOKEN || 'z9e754fjpjfz7dwd6rozjg51xe';
+const botToken = process.env.BOT_TOKEN || 'kwo7ijukwfrg3qzufukwpz3q5y';
 
 console.log('Загруженные переменные окружения:', {
   mattermostUrl,
@@ -27,45 +27,80 @@ if (!mattermostUrl || !botToken) {
 const client = new Client4();
 client.setUrl(mattermostUrl);
 
-// Устанавливаем токен с префиксом Bearer
-if (botToken.startsWith('Bearer ')) {
-  client.setToken(botToken);
-} else {
-  client.setToken(`Bearer ${botToken}`);
-}
-
 console.log('Клиент настроен с URL:', mattermostUrl);
+console.log(
+  'Токен (первые/последние 5 символов):',
+  botToken.substring(0, 5) + '...' + botToken.substring(botToken.length - 5),
+);
 
-// Проверка аутентификации
+// Проверка аутентификации с разными форматами токена
 async function testAuth() {
-  try {
-    console.log('Попытка авторизации...');
-    const me = await client.getMe();
-    console.log('Авторизация успешна. Пользователь:', {
-      id: me.id,
-      username: me.username,
-      roles: me.roles,
-    });
-    return true;
-  } catch (error) {
-    console.error('Ошибка авторизации:', {
-      message: error.message,
-      status: error.status_code,
-      url: error.url,
-    });
+  const tokenFormats = [
+    botToken, // как есть
+    `Bearer ${botToken}`, // с Bearer
+    botToken.replace('Bearer ', ''), // без Bearer
+  ];
 
-    // Попробуем без префикса Bearer
+  for (let i = 0; i < tokenFormats.length; i++) {
+    const token = tokenFormats[i];
+    console.log(
+      `Попытка авторизации ${i + 1}/3 с токеном формата:`,
+      token.startsWith('Bearer') ? 'Bearer ...' : 'без Bearer...',
+    );
+
     try {
-      console.log('Попытка авторизации без префикса Bearer...');
-      client.setToken(botToken.replace('Bearer ', ''));
+      client.setToken(token);
+
+      // Дополнительно устанавливаем заголовок вручную
+      client.setDefaultHeaders({
+        Authorization: token.startsWith('Bearer') ? token : `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      });
+
       const me = await client.getMe();
-      console.log('Авторизация успешна без Bearer. Пользователь:', me.username);
+      console.log('Авторизация успешна! Пользователь:', {
+        id: me.id,
+        username: me.username,
+        roles: me.roles,
+        is_bot: me.is_bot,
+      });
       return true;
-    } catch (secondError) {
-      console.error('Вторая попытка авторизации также неудачна:', secondError.message);
-      return false;
+    } catch (error) {
+      console.error(`Попытка ${i + 1} неудачна:`, {
+        message: error.message,
+        status: error.status_code,
+        url: error.url,
+      });
     }
   }
+
+  // Если все попытки неудачны, попробуем сделать простой HTTP запрос
+  console.log('Все попытки через SDK неудачны, пробуем прямой HTTP запрос...');
+  try {
+    const response = await fetch(`${mattermostUrl}/api/v4/users/me`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${botToken.replace('Bearer ', '')}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    console.log('HTTP запрос статус:', response.status);
+    console.log('HTTP запрос headers:', Object.fromEntries(response.headers.entries()));
+
+    if (response.ok) {
+      const userData = await response.json();
+      console.log('Прямой HTTP запрос успешен:', userData.username);
+      return true;
+    } else {
+      const errorText = await response.text();
+      console.error('HTTP запрос неудачен:', errorText);
+    }
+  } catch (httpError) {
+    console.error('Ошибка HTTP запроса:', httpError.message);
+  }
+
+  return false;
 }
 
 // Инициализация клиента при старте (убираем process.exit для Vercel)
@@ -79,70 +114,92 @@ async function initializeClient() {
   return true;
 }
 
+// Альтернативная функция получения пользователей через прямой HTTP запрос
+async function getUsersDirectHttp() {
+  try {
+    console.log('Получение пользователей через прямой HTTP запрос...');
+    const response = await fetch(
+      `${mattermostUrl}/api/v4/users?page=0&per_page=60&in_team=${
+        process.env.TEAM_ID || 'jgx6zzdutpdcpfmbayrmeydyzw'
+      }`,
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${botToken.replace('Bearer ', '')}`,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+
+    if (response.ok) {
+      const users = await response.json();
+      console.log(`Получено пользователей через HTTP: ${users.length}`);
+      const filteredUsers = users.filter((user) => !user.is_bot && user.delete_at === 0);
+      console.log(`Отфильтровано пользователей: ${filteredUsers.length}`);
+      return filteredUsers;
+    } else {
+      const errorText = await response.text();
+      console.error('Ошибка HTTP запроса пользователей:', response.status, errorText);
+      return [];
+    }
+  } catch (error) {
+    console.error('Ошибка прямого HTTP запроса:', error.message);
+    return [];
+  }
+}
+
 // Получение списка пользователей с улучшенной обработкой ошибок
 async function getUsers() {
   try {
     console.log('Запрашиваем список пользователей...');
 
-    // Проверяем аутентификацию перед запросом
+    // Сначала пробуем через SDK
     try {
+      // Проверяем аутентификацию перед запросом
       await client.getMe();
-      console.log('Проверка аутентификации прошла успешно');
-    } catch (authError) {
-      console.log('Ошибка аутентификации, попытка переустановить токен...');
-      // Переустанавливаем токен
-      if (botToken.startsWith('Bearer ')) {
-        client.setToken(botToken);
-      } else {
-        client.setToken(botToken);
-      }
+      console.log('Проверка аутентификации через SDK прошла успешно');
 
-      // Повторная проверка
-      await client.getMe();
-      console.log('Повторная аутентификация успешна');
-    }
+      const users = [];
+      let page = 0;
+      const perPage = 60;
+      let hasMore = true;
 
-    const users = [];
-    let page = 0;
-    const perPage = 60; // Уменьшаем размер страницы
-    let hasMore = true;
+      while (hasMore && page < 3) {
+        try {
+          console.log(`Запрашиваем страницу ${page} через SDK...`);
+          const pageUsers = await client.getProfiles(page, perPage);
 
-    while (hasMore && page < 10) {
-      // Ограничиваем количество страниц
-      try {
-        console.log(`Запрашиваем страницу ${page}...`);
-        const pageUsers = await client.getProfiles(page, perPage);
-        console.log(
-          `Получено пользователей на странице ${page}:`,
-          typeof pageUsers,
-          Object.keys(pageUsers || {}).length,
-        );
+          if (Array.isArray(pageUsers)) {
+            users.push(...pageUsers);
+            hasMore = pageUsers.length === perPage;
+          } else if (pageUsers && typeof pageUsers === 'object') {
+            const userArray = Object.values(pageUsers);
+            users.push(...userArray);
+            hasMore = userArray.length === perPage;
+          } else {
+            break;
+          }
 
-        if (Array.isArray(pageUsers)) {
-          users.push(...pageUsers);
-          hasMore = pageUsers.length === perPage;
-        } else if (pageUsers && typeof pageUsers === 'object') {
-          // Mattermost API возвращает объект, где ключи - это ID пользователей
-          const userArray = Object.values(pageUsers);
-          console.log(`Преобразован объект в массив: ${userArray.length} пользователей`);
-          users.push(...userArray);
-          hasMore = userArray.length === perPage;
-        } else {
-          console.log('Неожиданный формат ответа:', pageUsers);
+          page++;
+        } catch (pageError) {
+          console.error(`Ошибка получения страницы ${page}:`, pageError.message);
           break;
         }
-
-        page++;
-      } catch (pageError) {
-        console.error(`Ошибка получения страницы ${page}:`, pageError.message);
-        break;
       }
+
+      if (users.length > 0) {
+        const filteredUsers = users.filter(
+          (user) => !user.is_bot && user.delete_at === 0,
+        );
+        console.log(`SDK: Всего ${users.length}, отфильтровано ${filteredUsers.length}`);
+        return filteredUsers;
+      }
+    } catch (sdkError) {
+      console.log('SDK не работает, пробуем прямой HTTP запрос...');
     }
 
-    console.log(`Всего получено пользователей: ${users.length}`);
-    const filteredUsers = users.filter((user) => !user.is_bot && user.delete_at === 0);
-    console.log(`Фильтровано пользователей: ${filteredUsers.length}`);
-    return filteredUsers;
+    // Если SDK не работает, пробуем прямой HTTP запрос
+    return await getUsersDirectHttp();
   } catch (error) {
     console.error('Ошибка получения пользователей:', error.message);
     return [];
@@ -382,8 +439,41 @@ app.post('/create-groups', async (req, res) => {
 });
 
 // Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+app.get('/health', async (req, res) => {
+  const authStatus = await testAuth();
+  res.json({
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    mattermost_auth: authStatus,
+    mattermost_url: mattermostUrl,
+    token_present: !!botToken,
+  });
+});
+
+// Диагностический endpoint
+app.get('/debug', async (req, res) => {
+  try {
+    const users = await getUsers();
+    res.json({
+      timestamp: new Date().toISOString(),
+      mattermost_url: mattermostUrl,
+      token_present: !!botToken,
+      token_format: botToken
+        ? botToken.startsWith('Bearer')
+          ? 'with_bearer'
+          : 'without_bearer'
+        : 'missing',
+      users_count: users.length,
+      sample_users: users
+        .slice(0, 3)
+        .map((u) => ({ id: u.id, username: u.username, is_bot: u.is_bot })),
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error.message,
+      timestamp: new Date().toISOString(),
+    });
+  }
 });
 
 // Инициализация при старте (не блокируем запуск)
