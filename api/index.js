@@ -125,16 +125,16 @@ app.post('/groupbot', async (req, res) => {
   try {
     // Формирование групп
     const groups = createGroups(names, groupSize);
-    let response = `## 🎯 Groups Formed\n`;
-    response += `**Participants:** ${names.length} | **Group Size:** ${groupSize}\n\n`;
+    let response = `## 🎯 Сформированные группы\n`;
+    response += `**Участников:** ${names.length} | **Размер групп:** ${groupSize}\n\n`;
     groups.forEach((group, index) => {
       const members = group.join(', ');
-      response += `**Group ${index + 1}:** ${members}\n`;
+      response += `**Группа ${index + 1}:** ${members}\n`;
     });
 
     const remainder = names.length % groupSize;
     if (remainder > 0) {
-      response += `\n*Last group has ${remainder} members*`;
+      response += `\n*Последняя группа содержит ${remainder} участников*`;
     }
 
     // Публикация результата
@@ -142,12 +142,12 @@ app.post('/groupbot', async (req, res) => {
 
     res.json({
       response_type: 'ephemeral',
-      text: 'Groups successfully formed and posted!',
+      text: 'Группы успешно сформированы и опубликованы!',
     });
   } catch (error) {
     res.json({
       response_type: 'ephemeral',
-      text: `Error: ${error.message}`,
+      text: `Ошибка: ${error.message}`,
     });
   }
 });
