@@ -35,6 +35,12 @@ async function testAuth() {
     return false;
   }
 }
+
+console.log(client, 'client');
+
+
+testAuth();
+
 // Получение списка пользователей
 async function getUsers() {
   try {
