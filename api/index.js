@@ -36,11 +36,10 @@ async function getChannelMembers(channelId) {
 }
 
 // Создание поста через HTTP (резервный метод)
-async function createPostHttp(channelId, message, props = null) {
+async function createPostHttp(channelId, message) {
   const postData = {
     channel_id: channelId,
     message: message,
-    props,
   };
 
   const response = await fetch(`${mattermostUrl}/api/v4/posts`, {
@@ -69,159 +68,68 @@ function createGroups(users, groupSize) {
   return groups;
 }
 
-// Хранение сессий пользователей
-const sessions = {};
-
-// Обновление меню с текущим состоянием
-async function updateSelectionMenu(channelId, userId) {
-  const session = sessions[userId];
-  if (!session) return null;
-
-  const selectedCount = session.selectedUsers.length;
-  const selectedUsernames = session.allUsers
-    .filter((user) => session.selectedUsers.includes(user.id))
-    .map((user) => `@${user.username}`)
-    .join(', ');
-
-  const baseUrl = process.env.VERCEL_URL || 'http://localhost:3000';
-
-  const attachments = [
-    {
-      color: '#2196F3',
-      title: '🎯 Создание групп',
-      text: `Найдено участников в канале: **${session.allUsers.length}**\n\n**Шаг 1:** Выберите участников (${selectedCount} выбрано)`,
-      actions: [
-        {
-          name: 'select_users',
-          type: 'select',
-          placeholder: 'Выберите участников',
-          multi_select: true,
-          options: session.allUsers.slice(0, 20).map((user) => ({
-            text: user.username,
-            value: user.id,
-          })),
-          integration: {
-            url: `${baseUrl}/select-users`,
-            context: {
-              action: 'select_users',
-              user_id: userId,
-              channel_id: channelId,
-            },
-          },
-        },
-      ],
-    },
-  ];
-
-  if (selectedCount > 0) {
-    attachments.push({
-      color: '#4CAF50',
-      text: `**Выбранные участники:** ${selectedUsernames}`,
-      actions: [],
-    });
-  }
-
-  attachments.push({
-    color: '#FF9800',
-    text: '**Шаг 2:** Выберите размер групп',
-    actions: [
-      {
-        name: 'select_size',
-        type: 'select',
-        placeholder: `Размер группы: ${session.groupSize}`,
-        options: [
-          { text: '👥 2 человека', value: '2' },
-          { text: '👥 3 человека', value: '3' },
-          { text: '👥 4 человека', value: '4' },
-          { text: '👥 5 человек', value: '5' },
-        ],
-        integration: {
-          url: `${baseUrl}/select-size`,
-          context: {
-            action: 'select_size',
-            user_id: userId,
-            channel_id: channelId,
-          },
-        },
-      },
-    ],
+// Поиск пользователя по имени
+function findUserByName(users, name) {
+  const normalizedName = name.trim().toLowerCase();
+  return users.find((user) => {
+    const username = user.username.toLowerCase();
+    const fullName = `${user.first_name} ${user.last_name}`.trim().toLowerCase();
+    return username === normalizedName || fullName === normalizedName;
   });
-
-  if (selectedCount > 0) {
-    attachments.push({
-      color: '#4CAF50',
-      text: '**Шаг 3:** Создайте группы',
-      actions: [
-        {
-          name: '🎲 Создать группы',
-          type: 'button',
-          style: 'primary',
-          integration: {
-            url: `${baseUrl}/create-groups`,
-            context: {
-              action: 'create_groups',
-              user_id: userId,
-              channel_id: channelId,
-            },
-          },
-        },
-        {
-          name: '🔄 Сбросить выбор',
-          type: 'button',
-          style: 'danger',
-          integration: {
-            url: `${baseUrl}/reset-selection`,
-            context: {
-              action: 'reset_selection',
-              user_id: userId,
-              channel_id: channelId,
-            },
-          },
-        },
-      ],
-    });
-  }
-
-  return attachments;
-}
-
-// Создание интерактивного меню
-async function createSelectionMenu(channelId, userId) {
-  const channelMembers = await getChannelMembers(channelId);
-  if (!channelMembers.length) {
-    throw new Error('Не удалось получить участников канала');
-  }
-
-  sessions[userId] = {
-    selectedUsers: [],
-    groupSize: 3,
-    channelId: channelId,
-    allUsers: channelMembers,
-  };
-
-  const attachments = await updateSelectionMenu(channelId, userId);
-  try {
-    await client.createPost({
-      channel_id: channelId,
-      message: '',
-      props: { attachments },
-    });
-  } catch {
-    await createPostHttp(channelId, '', { attachments });
-  }
 }
 
 // Обработка Slash-команды /groupbot
 app.post('/groupbot', async (req, res) => {
-  const { channel_id, user_id, text } = req.body;
+  const { channel_id, text } = req.body;
 
-  if (!text || text.trim() === '' || text.trim() === 'menu') {
-    await createSelectionMenu(channel_id, user_id);
+  if (!text || text.trim() === '') {
     res.json({
       response_type: 'ephemeral',
-      text: 'Интерактивное меню создано! Выберите участников.',
+      text: `**GroupBot - Справка:**
+      
+• \`/groupbot <число> <имя1>\\n<имя2>\\n...\` - создать группы из указанных участников
+  Пример: \`/groupbot 2 Елена Ященко\\nАнатолий Кириллов\\nАнастасия Гречанова\`
+      
+**Требования:**
+→ Число участников в группе: 2–5
+→ Имена должны соответствовать username или имени/фамилии участников канала`,
     });
-  } else if (text.includes('quick')) {
+    return;
+  }
+
+  // Парсинг команды
+  const lines = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2) {
+    res.json({
+      response_type: 'ephemeral',
+      text: 'Ошибка: укажите число участников и минимум одного участника.',
+    });
+    return;
+  }
+
+  const groupSize = parseInt(lines[0], 10);
+  if (isNaN(groupSize) || groupSize < 2 || groupSize > 5) {
+    res.json({
+      response_type: 'ephemeral',
+      text: 'Ошибка: число участников в группе должно быть от 2 до 5.',
+    });
+    return;
+  }
+
+  const names = lines.slice(1);
+  if (!names.length) {
+    res.json({
+      response_type: 'ephemeral',
+      text: 'Ошибка: укажите хотя бы одного участника.',
+    });
+    return;
+  }
+
+  try {
+    // Получение участников канала
     const channelMembers = await getChannelMembers(channel_id);
     if (!channelMembers.length) {
       res.json({
@@ -231,14 +139,52 @@ app.post('/groupbot', async (req, res) => {
       return;
     }
 
-    const groupSize = 3;
-    const groups = createGroups(channelMembers, groupSize);
-    let response = `## 🎲 Случайные группы (размер: ${groupSize})\n\n`;
+    // Поиск указанных пользователей
+    const selectedUsers = [];
+    const notFound = [];
+
+    for (const name of names) {
+      const user = findUserByName(channelMembers, name);
+      if (user) {
+        selectedUsers.push(user);
+      } else {
+        notFound.push(name);
+      }
+    }
+
+    if (notFound.length) {
+      res.json({
+        response_type: 'ephemeral',
+        text: `Ошибка: не найдены участники: ${notFound.join(
+          ', ',
+        )}. Проверьте имена или username.`,
+      });
+      return;
+    }
+
+    if (selectedUsers.length < groupSize) {
+      res.json({
+        response_type: 'ephemeral',
+        text: `Ошибка: недостаточно участников (${selectedUsers.length}) для групп размера ${groupSize}.`,
+      });
+      return;
+    }
+
+    // Формирование групп
+    const groups = createGroups(selectedUsers, groupSize);
+    let response = `## 🎯 Сформированные группы\n`;
+    response += `**Участников:** ${selectedUsers.length} | **Размер групп:** ${groupSize}\n\n`;
     groups.forEach((group, index) => {
       const members = group.map((user) => `@${user.username}`).join(', ');
       response += `**Группа ${index + 1}:** ${members}\n`;
     });
 
+    const remainder = selectedUsers.length % groupSize;
+    if (remainder > 0) {
+      response += `\n*Последняя группа содержит ${remainder} человек*`;
+    }
+
+    // Публикация результата
     try {
       await client.createPost({ channel_id, message: response });
     } catch {
@@ -247,154 +193,14 @@ app.post('/groupbot', async (req, res) => {
 
     res.json({
       response_type: 'ephemeral',
-      text: 'Группы успешно созданы!',
+      text: 'Группы успешно созданы и опубликованы в канале!',
     });
-  } else {
+  } catch (error) {
     res.json({
       response_type: 'ephemeral',
-      text: `**GroupBot - Справка:**
-      
-• \`/groupbot\` или \`/groupbot menu\` - показать интерактивное меню
-• \`/groupbot quick\` - быстро создать группы из всех участников канала
-      
-**Интерактивное меню позволяет:**
-→ Выбрать участников из списка
-→ Задать размер групп (2-5 человек)
-→ Создать случайные группы`,
+      text: `Ошибка: ${error.message}`,
     });
   }
-});
-
-// Обработка множественного выбора пользователей
-app.post('/select-users', async (req, res) => {
-  console.log('=== SELECT USERS REQUEST ===');
-  console.log('Body:', JSON.stringify(req.body, null, 2));
-
-  const { user_id, channel_id } = req.body.context || {};
-  let selectedOptions = req.body.selected_options || [];
-
-  if (!user_id || !sessions[user_id]) {
-    console.log('Сессия не найдена или истекла для userId:', user_id);
-    res.json({
-      ephemeral_text: 'Сессия истекла. Запустите команду заново.',
-    });
-    return;
-  }
-
-  // Обработка selected_options: проверяем, массив или объект
-  if (!Array.isArray(selectedOptions)) {
-    selectedOptions = selectedOptions ? [selectedOptions] : [];
-  }
-
-  console.log('Selected options:', selectedOptions);
-
-  sessions[user_id].selectedUsers = selectedOptions.map((option) => option.value);
-
-  console.log('Updated selectedUsers:', sessions[user_id].selectedUsers);
-
-  const attachments = await updateSelectionMenu(channel_id, user_id);
-  console.log('Response attachments:', JSON.stringify(attachments, null, 2));
-
-  res.json({
-    update: {
-      message: '',
-      props: { attachments },
-    },
-  });
-});
-
-// Сброс выбора
-app.post('/reset-selection', async (req, res) => {
-  const { user_id, channel_id } = req.body.context || {};
-
-  if (!user_id || !sessions[user_id]) {
-    res.json({
-      ephemeral_text: 'Сессия истекла. Запустите команду заново.',
-    });
-    return;
-  }
-
-  sessions[user_id].selectedUsers = [];
-  const attachments = await updateSelectionMenu(channel_id, user_id);
-  res.json({
-    update: {
-      message: '',
-      props: { attachments },
-    },
-  });
-});
-
-// Обработка выбора размера группы
-app.post('/select-size', async (req, res) => {
-  const { user_id, channel_id } = req.body.context || {};
-  const { selected_option } = req.body;
-
-  if (!user_id || !sessions[user_id]) {
-    res.json({
-      ephemeral_text: 'Сессия истекла. Запустите команду заново.',
-    });
-    return;
-  }
-
-  if (selected_option && selected_option.value) {
-    sessions[user_id].groupSize = parseInt(selected_option.value, 10) || 3;
-  }
-
-  const attachments = await updateSelectionMenu(channel_id, user_id);
-  res.json({
-    update: {
-      message: '',
-      props: { attachments },
-    },
-  });
-});
-
-// Создание групп
-app.post('/create-groups', async (req, res) => {
-  const { channel_id, user_id } = req.body.context || {};
-
-  if (!user_id || !sessions[user_id]) {
-    res.json({
-      ephemeral_text: 'Сессия истекла. Запустите команду заново.',
-    });
-    return;
-  }
-
-  const session = sessions[user_id];
-  if (!session.selectedUsers.length) {
-    res.json({
-      ephemeral_text: 'Выберите участников перед созданием групп!',
-    });
-    return;
-  }
-
-  const selectedUserData = session.allUsers.filter((user) =>
-    session.selectedUsers.includes(user.id),
-  );
-  const groups = createGroups(selectedUserData, session.groupSize);
-
-  let response = `## 🎯 Сформированные группы\n`;
-  response += `**Участников:** ${selectedUserData.length} | **Размер групп:** ${session.groupSize}\n\n`;
-  groups.forEach((group, index) => {
-    const members = group.map((user) => `@${user.username}`).join(', ');
-    response += `**Группа ${index + 1}:** ${members}\n`;
-  });
-
-  const remainder = selectedUserData.length % session.groupSize;
-  if (remainder > 0) {
-    response += `\n*Последняя группа содержит ${remainder} человек*`;
-  }
-
-  try {
-    await client.createPost({ channel_id, message: response });
-  } catch {
-    await createPostHttp(channel_id, response);
-  }
-
-  delete sessions[user_id];
-  res.json({
-    ephemeral_text: '🎉 Группы успешно созданы и опубликованы в канале!',
-  });
 });
 
 // Health check endpoint
