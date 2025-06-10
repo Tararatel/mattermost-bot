@@ -7,7 +7,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Конфигурация Mattermost
-const mattermostUrl = 'https://elbrus-mattermost.ignorelist.com/';
+const mattermostUrl = 'https://elbrus-mattermost.ignorelist.com';
 const botToken = 'kwo7ijukwfrg3qzufukwpz3q5y';
 
 console.log('Загруженные переменные окружения:', {
