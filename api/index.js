@@ -83,7 +83,7 @@ async function updateSelectionMenu(channelId, userId) {
     .map((user) => `@${user.username}`)
     .join(', ');
 
-  const baseUrl = process.env.VERCEL_URL || 'https://mattermost-bot-vert.vercel.app';
+  const baseUrl = process.env.VERCEL_URL || 'http://localhost:3000';
 
   const attachments = [
     {
@@ -95,7 +95,7 @@ async function updateSelectionMenu(channelId, userId) {
           name: 'select_users',
           type: 'select',
           placeholder: 'Выберите участников',
-          multi_select: true, // Включаем множественный выбор
+          multi_select: true,
           options: session.allUsers.slice(0, 20).map((user) => ({
             text: user.username,
             value: user.id,
@@ -267,21 +267,34 @@ app.post('/groupbot', async (req, res) => {
 
 // Обработка множественного выбора пользователей
 app.post('/select-users', async (req, res) => {
+  console.log('=== SELECT USERS REQUEST ===');
+  console.log('Body:', JSON.stringify(req.body, null, 2));
+
   const { user_id, channel_id } = req.body.context || {};
-  const { selected_options } = req.body;
+  let selectedOptions = req.body.selected_options || [];
 
   if (!user_id || !sessions[user_id]) {
+    console.log('Сессия не найдена или истекла для userId:', user_id);
     res.json({
       ephemeral_text: 'Сессия истекла. Запустите команду заново.',
     });
     return;
   }
 
-  sessions[user_id].selectedUsers = selected_options
-    ? selected_options.map((option) => option.value)
-    : [];
+  // Обработка selected_options: проверяем, массив или объект
+  if (!Array.isArray(selectedOptions)) {
+    selectedOptions = selectedOptions ? [selectedOptions] : [];
+  }
+
+  console.log('Selected options:', selectedOptions);
+
+  sessions[user_id].selectedUsers = selectedOptions.map((option) => option.value);
+
+  console.log('Updated selectedUsers:', sessions[user_id].selectedUsers);
 
   const attachments = await updateSelectionMenu(channel_id, user_id);
+  console.log('Response attachments:', JSON.stringify(attachments, null, 2));
+
   res.json({
     update: {
       message: '',
