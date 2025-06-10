@@ -114,37 +114,7 @@ async function getChannelMembers(channelId) {
   }
 }
 
-// Обновление существующего поста
-async function updatePostHttp(postId, message, props = null) {
-  try {
-    const cleanToken = botToken.replace('Bearer ', '');
-    const postData = {
-      id: postId,
-      message: message,
-    };
-
-    if (props) {
-      postData.props = props;
-    }
-
-    const response = await fetch(`${mattermostUrl}/api/v4/posts/${postId}/patch`, {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${cleanToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(postData),
-    });
-
-    if (response.ok) {
-      return await response.json();
-    } else {
-      throw new Error(`HTTP ${response.status}`);
-    }
-  } catch (error) {
-    throw error;
-  }
-}
+// Создание поста через HTTP
 async function createPostHttp(channelId, message, props = null) {
   try {
     const cleanToken = botToken.replace('Bearer ', '');
@@ -188,9 +158,6 @@ function createGroups(users, groupSize) {
 
 // Хранение сессий пользователей
 const sessions = {};
-
-// Хранение ID постов с меню для обновления
-const menuPosts = {};
 
 // Обновление меню с текущим состоянием
 async function updateSelectionMenu(channelId, userId) {
@@ -336,9 +303,8 @@ async function createSelectionMenu(channelId, userId) {
     const attachments = await updateSelectionMenu(channelId, userId);
 
     // Отправляем меню
-    let createdPost;
     try {
-      createdPost = await client.createPost({
+      await client.createPost({
         channel_id: channelId,
         message: '',
         props: {
@@ -346,15 +312,7 @@ async function createSelectionMenu(channelId, userId) {
         },
       });
     } catch (sdkError) {
-      createdPost = await createPostHttp(channelId, '', { attachments: attachments });
-    }
-
-    // Сохраняем ID поста для будущих обновлений
-    if (createdPost && createdPost.id) {
-      menuPosts[userId] = {
-        postId: createdPost.id,
-        channelId: channelId,
-      };
+      await createPostHttp(channelId, '', { attachments: attachments });
     }
   } catch (error) {
     throw error;
@@ -478,33 +436,7 @@ app.post('/toggle-user', async (req, res) => {
 
   console.log('Updated selected users:', session.selectedUsers);
 
-  // Пытаемся обновить пост напрямую
-  try {
-    const menuPost = menuPosts[user_id];
-    if (menuPost) {
-      const attachments = await updateSelectionMenu(channel_id, user_id);
-
-      try {
-        await client.updatePost(menuPost.postId, {
-          message: '',
-          props: {
-            attachments: attachments,
-          },
-        });
-      } catch (sdkError) {
-        await updatePostHttp(menuPost.postId, '', { attachments: attachments });
-      }
-
-      res.json({
-        ephemeral_text: 'Выбор обновлен!',
-      });
-      return;
-    }
-  } catch (updateError) {
-    console.log('Failed to update post directly, using response update');
-  }
-
-  // Обновляем меню через ответ
+  // Обновляем меню
   const attachments = await updateSelectionMenu(channel_id, user_id);
 
   console.log('Sending update response');
