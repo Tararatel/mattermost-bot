@@ -136,7 +136,7 @@ app.post('/groupbot', async (req, res) => {
     if (remainder > 0) {
       response += `\n*Last group has ${remainder} members*`;
     }
-пше ф
+
     // Публикация результата
     await createPost(channel_id, response);
 
