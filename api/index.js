@@ -401,17 +401,9 @@ app.post('/groupbot', async (req, res) => {
 
 // Переключение выбора пользователя
 app.post('/toggle-user', async (req, res) => {
-  console.log('=== TOGGLE USER REQUEST ===');
-  console.log('Headers:', req.headers);
-  console.log('Body:', JSON.stringify(req.body, null, 2));
-
   const { user_id, target_user_id, channel_id } = req.body.context || {};
 
-  console.log('Extracted data:', { user_id, target_user_id, channel_id });
-  console.log('Sessions:', Object.keys(sessions));
-
   if (!user_id || !sessions[user_id]) {
-    console.log('Session not found or expired');
     res.json({
       ephemeral_text: 'Сессия истекла. Запустите команду заново.',
     });
@@ -421,25 +413,17 @@ app.post('/toggle-user', async (req, res) => {
   const session = sessions[user_id];
   const userIndex = session.selectedUsers.indexOf(target_user_id);
 
-  console.log('Current selected users:', session.selectedUsers);
-  console.log('Target user index:', userIndex);
-
   if (userIndex === -1) {
     // Добавляем пользователя
     session.selectedUsers.push(target_user_id);
-    console.log('Added user:', target_user_id);
   } else {
     // Убираем пользователя
     session.selectedUsers.splice(userIndex, 1);
-    console.log('Removed user:', target_user_id);
   }
-
-  console.log('Updated selected users:', session.selectedUsers);
 
   // Обновляем меню
   const attachments = await updateSelectionMenu(channel_id, user_id);
 
-  console.log('Sending update response');
   res.json({
     update: {
       message: '',
@@ -452,9 +436,6 @@ app.post('/toggle-user', async (req, res) => {
 
 // Сброс выбора
 app.post('/reset-selection', async (req, res) => {
-  console.log('=== RESET SELECTION REQUEST ===');
-  console.log('Body:', JSON.stringify(req.body, null, 2));
-
   const { user_id, channel_id } = req.body.context || {};
 
   if (!user_id || !sessions[user_id]) {
@@ -480,9 +461,6 @@ app.post('/reset-selection', async (req, res) => {
 
 // Обработка выбора размера группы
 app.post('/select-size', async (req, res) => {
-  console.log('=== SELECT SIZE REQUEST ===');
-  console.log('Body:', JSON.stringify(req.body, null, 2));
-
   const { user_id, channel_id } = req.body.context || {};
   const { selected_option } = req.body;
 
@@ -495,7 +473,6 @@ app.post('/select-size', async (req, res) => {
 
   if (selected_option && selected_option.value) {
     sessions[user_id].groupSize = parseInt(selected_option.value, 10) || 3;
-    console.log('Updated group size to:', sessions[user_id].groupSize);
   }
 
   const attachments = await updateSelectionMenu(channel_id, user_id);
@@ -512,9 +489,6 @@ app.post('/select-size', async (req, res) => {
 
 // Создание групп
 app.post('/create-groups', async (req, res) => {
-  console.log('=== CREATE GROUPS REQUEST ===');
-  console.log('Body:', JSON.stringify(req.body, null, 2));
-
   const { channel_id, user_id } = req.body.context || {};
 
   if (!user_id || !sessions[user_id]) {
@@ -568,18 +542,10 @@ app.post('/create-groups', async (req, res) => {
       ephemeral_text: '🎉 Группы успешно созданы и опубликованы в канале!',
     });
   } catch (error) {
-    console.error('Error creating groups:', error);
     res.json({
       ephemeral_text: `Ошибка при создании групп: ${error.message}`,
     });
   }
-});
-
-// Добавляем общий обработчик для всех POST запросов для отладки
-app.use('*', (req, res, next) => {
-  console.log(`${req.method} ${req.originalUrl}`);
-  console.log('Body:', req.body);
-  next();
 });
 
 // Health check endpoint
@@ -589,7 +555,6 @@ app.get('/health', async (req, res) => {
     status: 'OK',
     timestamp: new Date().toISOString(),
     mattermost_auth: authStatus,
-    sessions_active: Object.keys(sessions).length,
   });
 });
 
